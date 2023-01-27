@@ -196,7 +196,7 @@ export default class ArenaEntity extends Entity implements TeamGroupEntity {
 				ac.positionData.values.angle = angle + Math.PI;
 			}
 
-			saveToLog("Arena Closing", "Arena running at `" + this.game.gamemode + "` is now closing.", 0xFFE869);
+			saveToLog("Arena Closing", "Arena is now closing.", 0xFFE869);
 		}, 5000);
 	}
 

@@ -25,23 +25,10 @@ import EntityManager from "./Native/Manager";
 import Client from "./Client";
 
 import ArenaEntity, { ArenaState } from "./Native/Arena";
-import FFAArena from "./Gamemodes/FFA";
-import Teams2Arena from "./Gamemodes/Team2";
-import SandboxArena from "./Gamemodes/Sandbox";
 
 import { ClientBound } from "./Const/Enums";
 import { IncomingMessage } from "http";
 import WebSocket = require("ws");
-import Teams4Arena from "./Gamemodes/Team4";
-import DominationArena from "./Gamemodes/Domination";
-import MothershipArena from "./Gamemodes/Mothership";
-import TestingArena from "./Gamemodes/Misc/Testing";
-import SpikeboxArena from "./Gamemodes/Misc/Spikebox";
-import DominationTestingArena from "./Gamemodes/Misc/DomTest";
-import JungleArena from "./Gamemodes/Misc/Jungle";
-import FactoryTestArena from "./Gamemodes/Misc/FactoryTest";
-import BallArena from "./Gamemodes/Misc/Ball";
-import MazeArena from "./Gamemodes/Maze";
 
 /**
  * WriterStream that broadcasts to all of the game's WebSockets.
@@ -63,44 +50,15 @@ class WSSWriterStream extends Writer {
     }
 }
 
-type DiepGamemodeID = "ffa" | "sandbox" | "teams" | "4teams" | "mot" | "dom" | "maze" | "tag" | "survival" | "testing" | "spike" | "domtest" | "jungle" | "factest" | "ball";
-
-const GamemodeToArenaClass: Record<DiepGamemodeID, (typeof ArenaEntity) | null> & { "*": typeof ArenaEntity }= {
-    "ffa": FFAArena,
-    "teams": Teams2Arena,
-    "4teams": Teams4Arena,
-    "sandbox": SandboxArena,
-    "*": SandboxArena,
-    "dom": DominationArena,
-    "survival": null,
-    "tag": null,
-    "mot": MothershipArena,
-    "maze": MazeArena,
-    "testing": TestingArena,
-    "spike": SpikeboxArena,
-    "domtest": DominationTestingArena,
-    "jungle": JungleArena,
-    "factest": FactoryTestArena,
-    "ball": BallArena
-}
-
 /**
  * Used for determining which endpoints go to the default.
  */
-const HOSTED_ENDPOINTS: string[] = [];
-
-    export default class GameServer {
-    /**
-     * Stores total player count.
-     */
-    public static globalPlayerCount = 0;
+export default class GameServer {
+    /** Stores total player count. */
+    public static globalPlayerCount: number = 0;
 
     /** Whether or not the game server is running. */
-    public running = true;
-    /** The gamemode the game is running. */
-    public gamemode: DiepGamemodeID;
-    /** The arena's display name */
-    public name: string;
+    public running: boolean = false;
 
     /** Whether or not to put players on the map. */
     public playersOnMap: boolean = false;
@@ -108,186 +66,136 @@ const HOSTED_ENDPOINTS: string[] = [];
     /** Inner WebSocket Server. */
     private wss: Server;
 
-
-    /** Info on limits
-     * The server caps players per IP to 4
-     * The server caps players per discord account to 2
-     */
+    /** The game's gamemode */
+    public GameMode: typeof ArenaEntity;
 
     /** Contains count of each ip. */
-    public ipCache: Record<string, number> = {}
-    /** Contains count of each discord acc. */
-    public discordCache: Record<string, number> = {}
+    public ipCache: Map<string, number> = new Map<string, number>();
 
     /** All clients connected. */
-    public clients: Set<Client>;
+    public clients: Set<Client> = new Set<Client>();
+
     /** Entity manager of the game. */
-    public entities: EntityManager;
+    public entities: EntityManager = new EntityManager(this);
+
     /** The current game tick. */
-    public tick: number;
+    public tick: number = 0;
+
     /** The game's arena entity. */
     public arena: ArenaEntity;
 
-    /** All listeners the function opened */
-    private _listeners: Record<string, ((ws: WebSocket, req: IncomingMessage) => void)[]> = {};
-
     /** The interval timer of the tick loop. */
-    private _tickInterval: NodeJS.Timeout;
+    private _tickInterval: NodeJS.Timeout | null = null;
 
-    public constructor(wss: Server, gamemode: DiepGamemodeID, name: string | "*") {
-        this.gamemode = gamemode;
-        this.name = name;
-
+    public constructor(wss: Server, GameMode: typeof ArenaEntity) {
         this.wss = wss;
+        this.GameMode = GameMode;
+        this.arena = new GameMode(this);
 
-        this.listen();
-        this.clients = new Set();
         // Keeps player count updating per addition
-        const _add = this.clients.add;
         this.clients.add = (client: Client) => {
-            GameServer.globalPlayerCount += 1;
+            ++GameServer.globalPlayerCount;
             this.broadcastPlayerCount();
-            
-            return _add.call(this.clients, client);
+            return Set.prototype.add.call(this.clients, client);
         }
-        const _delete = this.clients.delete;
+
         this.clients.delete = (client: Client) => {
-            let success = _delete.call(this.clients, client);
+            const success = Set.prototype.delete.call(this.clients, client);
             if (success) {
-                GameServer.globalPlayerCount -= 1;
+                --GameServer.globalPlayerCount;
                 this.broadcastPlayerCount();
             }
-
             return success;
         }
-        const _clear = this.clients.clear;
+
         this.clients.clear = () => {
             GameServer.globalPlayerCount -= this.clients.size;
             this.broadcastPlayerCount();
-            
-            return _clear.call(this.clients);
+            Set.prototype.clear.call(this.clients);
         }
 
-        this.entities = new EntityManager(this);
-        this.tick = 0;
+        this.listen();
 
-        this.arena = new (GamemodeToArenaClass[this.gamemode] || GamemodeToArenaClass["*"])(this);
-
-        this._tickInterval = setInterval(() => {
-            if (this.clients.size) this.tickLoop();
-        }, config.mspt);
+        this.start();
     }
 
     /** Sets up listeners */
     private listen() {
-        HOSTED_ENDPOINTS.push(this.gamemode);
-
-        this._listeners["connection"] = [];
-        const onConnect = this._listeners.connection[0] = (ws: WebSocket, request: IncomingMessage) => {
-            // shouldHandle takes care of this for us
-            const endpoint: DiepGamemodeID = (request.url || "").slice((request.url || "").indexOf("-") + 1) as DiepGamemodeID;
-        
-            if (!(!HOSTED_ENDPOINTS.includes(endpoint)) && this.gamemode !== endpoint) return;
-
+        this.wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
             util.log("Incoming client");
-            if (this.arena.state !== ArenaState.OPEN) {
+
+            if (!this.arena || !this.running || this.arena.state !== ArenaState.OPEN) {
                 util.log("Arena is not open: Closing client");
-                return  ws.terminate();
+                return ws.terminate();
             }
 
-            const ipPossible = request.headers['x-forwarded-for'] || request.socket.remoteAddress || "";
+            const ipPossible = req.headers['x-forwarded-for'] || req.socket.remoteAddress || "";
             const ipList = Array.isArray(ipPossible) ? ipPossible : ipPossible.split(',').map(c => c.trim());
-            const ip = ipList[ipList.length - 1] || ""
-            
-            if ((ip !== ipList[0] || !ip) && config.mode !== "development") return request.destroy(new Error("Client ips dont match."));
-            
-            if (!this.ipCache[ip]) this.ipCache[ip] = 1;
-            // When the player is banned, ipCache[ip] is boosted to infinity
-            else if (this.ipCache[ip] === Infinity) return request.destroy();
-            else {
-                this.ipCache[ip] += 1;
+            const ip = ipList[ipList.length - 1] || "";
+            if ((ip !== ipList[0] || !ip) && config.mode !== "development") return req.destroy(new Error("Client ips dont match."));
 
-                if (config.connectionsPerIp !== -1 && this.ipCache[ip] > config.connectionsPerIp) {
-                    this.ipCache[ip] -= 1;
-                    return request.destroy();
-                }
-            }
+            const concurrentConnections = this.ipCache.get(ip) || 0;
+            const isBanned = concurrentConnections === Infinity;
+            const connectionLimitReached = config.connectionsPerIp !== -1 && concurrentConnections > config.connectionsPerIp;
+            if (isBanned || connectionLimitReached) return req.destroy();
 
-            // The rest of the parsing is taken care of in index.ts, so we can be sure there is a proper url here
+            this.ipCache.set(ip, concurrentConnections + 1);
             this.clients.add(new Client(this, ws, ip));
-        }
-
-        this.wss.on("connection", onConnect);
-
-        util.saveToLog("Game Deploying", "Game now deploying gamemode `" + this.gamemode + "` at endpoint `" + this.gamemode + "`.", 0x1FE0C4);
+        });
     }
 
     /** Returns a WebSocketServer Writer Broadcast Stream. */
     public broadcast() {
         return new WSSWriterStream(this);
     }
+
     /** Broadcasts a player count packet. */
     public broadcastPlayerCount() {
         this.broadcast().vu(ClientBound.PlayerCount).vu(GameServer.globalPlayerCount).send();
     }
 
     /** Ends the game instance. */
-    public end() {
-        util.saveToLog("Game Instance Ending", "Game running " + this.gamemode + " at `" + this.gamemode + "` is now closing.", 0xEE4132);
-        util.log("Ending Game instance");
-        
-        util.removeFast(HOSTED_ENDPOINTS, HOSTED_ENDPOINTS.indexOf(this.gamemode));
+    public end(doRestart: boolean = true) {
+        util.log(`${doRestart ? "Restarting" : "Ending"} Game Instance.`);
 
-        clearInterval(this._tickInterval);
-
-        for (const event in this._listeners) for (const listener of this._listeners[event]) this.wss.off(event, listener);
+        if(this._tickInterval) clearInterval(this._tickInterval);
+        this._tickInterval = null;
 
         for (const client of this.clients) {
-            client.terminate()
+            client.terminate();
         }
 
-        this.tick = 0;
         this.clients.clear();
         this.entities.clear();
-
-        this.ipCache = {};
+        this.ipCache.clear();
 
         this.running = false;
-        this.onEnd();
+        this.playersOnMap = false;
+
+        if(doRestart) this.start();
     }
 
-    /** Can be overwritten to call things when the game is over */
-    public onEnd() {
-        util.log("Game instance is now over");
-
-        this.start();
-    }
-
-    /** Reinitializes a game instance */
+    /** Initializes a game instance */
     public start() {
         if (this.running) return;
 
-        util.log("New game instance booting up")
+        util.log("New game instance booting up");
 
-        this.listen();
-        this.clients.clear();
+        this.arena = new this.GameMode(this);
 
-        this.entities = new EntityManager(this);
         this.tick = 0;
-
-        this.arena = new (GamemodeToArenaClass[this.gamemode] || GamemodeToArenaClass["*"])(this);
-
         this._tickInterval = setInterval(() => {
             if (this.clients.size) this.tickLoop();
         }, config.mspt);
+
+        this.running = true;
+        this.playersOnMap = true;
     }
 
     /** Ticks the game. */
     private tickLoop() {
-        
-        this.tick += 1;
+        ++this.tick;
         this.entities.tick(this.tick);
-
         for (const client of this.clients) client.tick(this.tick);
     }
 }

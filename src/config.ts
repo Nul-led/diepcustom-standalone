@@ -25,11 +25,11 @@ export const serverPort: number = parseInt(process.env.PORT || "8080");
 /** Milliseconds per tick in the game. */
 export const mspt: number = 40;
 
-/** Ticks per second in the game */
+/** Ticks per second in the game. */
 export const tps: number = 1000 / mspt;
 
-/** Max connections per ip. -1 = no limit */
-export const connectionsPerIp: number = -1;
+/** Max connections per ip. -1 = no limit. */
+export const connectionsPerIp: number = parseInt(process.env.CONNECTION_LIMIT || "-1");
 
 /** Max incoming packet size (HARD LIMIT), not the max read / write size */
 export const wssMaxMessageSize: number = 4096; // 4 kb
@@ -43,20 +43,17 @@ export const host: string = process.env.SERVER_INFO || (process.env.NODE_ENV ===
 /** Runtime mode. */
 export const mode: string = process.env.NODE_ENV || "development";
 
-/** Is hosting a rest api */
+/** Is hosting a rest api. */
 export const enableApi: boolean = true;
 
-/** Rest API location (root of all other endpoints), ignored if enableApi is false */
+/** Rest API location (root of all other endpoints), ignored if enableApi is false. */
 export const apiLocation: string = "api";
 
-/** Allows execution of custom commands */
+/** Enables server analytics capturing. */
+export const enableAnalytics: boolean = true;
+
+/** Allows execution of custom commands. */
 export const enableCommands: boolean = true;
-
-/** Is hosting a client */
-export const enableClient: boolean = true;
-
-/** Client files location, ignored if enableClient is false, path from the root dir of the project */
-export const clientLocation: string = "./client";
 
 /** Magic number used for tank xor and stat xor. */
 export const magicNum = (function magicNum(build: string) {
@@ -73,13 +70,13 @@ export const magicNum = (function magicNum(build: string) {
 /** Spatial Hashing CellSize for physics. Zero = quadtree. */
 export const spatialHashingCellSize: number = 7;
 
-/** Amount of TICKs before the next boss spawn attempt */
+/** Amount of TICKs before the next boss spawn attempt. */
 export const bossSpawningInterval = 45 * 60 * tps;
 
-/** Hashed (sha256) dev password */
+/** Hashed (sha256) dev password. */
 export const devPasswordHash: string | undefined = process.env.DEV_PASSWORD_HASH;
 
-/** Whether or not Verbose Logs should be logged */
+/** Whether or not Verbose Logs should be logged. */
 export const doVerboseLogs: boolean = false;
 
 /** Access levels of each client. */
@@ -88,19 +85,17 @@ export const enum AccessLevel {
     BetaAccess   = 2,
     kReserved    = 1,
     PublicAccess = 0,
-    NoAccess     = -1
+    NoAccess     = -1,
 }
 
-/** Every access level, including and above this one is unbannable via client.ban() */
+/** Every access level, including and above this one is unbannable via client.ban(). */
 export const unbannableLevelMinimum: AccessLevel = AccessLevel.FullAccess;
 
-/** Default access level, client's without valid password's will get set to this */
-export const defaultAccessLevel: AccessLevel = AccessLevel.BetaAccess;
+/** Default access level, client's without valid password's will get set to this. */
+export const defaultAccessLevel: AccessLevel = AccessLevel.PublicAccess;
 
-/** The developer tokens by role (UNNECESSARY UNLESS DISCORD INTEGRATION) */
-export const devTokens: Record<string, AccessLevel> = {
-    "*": defaultAccessLevel
-}
-
-/** Maximum level that player tanks can have. Default: 45 */
+/** Maximum level that player tanks can have. Default: 45. */
 export const maxPlayerLevel = 45;
+
+/** The gamemode to be hosted. */
+export const hostedGamemode: string = process.env.HOSTED_GAMEMODE || "ffa";
